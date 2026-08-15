@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Contact — DeepVision.ai{% endblock %}
+{% block content %}
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow">Contact</p>
+    <h1>Let's innovate together.</h1>
+    <p class="page-hero-lede">Your next big idea + our AI expertise = innovation.</p>
+  </div>
+</section>
+
+<section class="section contact-section">
+  <div class="wrap contact-grid">
+
+    <div class="contact-info">
+      <div class="info-block">
+        <h3>Email</h3>
+        <p><a href="mailto:deepvision.ai.contact@gmail.com">deepvision.ai.contact@gmail.com</a></p>
+      </div>
+      <div class="info-block">
+        <h3>Phone</h3>
+        <p><a href="tel:+923176704895">+92 317 6704895</a></p>
+      </div>
+      <div class="info-block">
+        <h3>Location</h3>
+        <p>Lahore, Pakistan</p>
+      </div>
+    </div>
+
+    <div class="contact-form-wrap">
+      {% if success %}
+      <div class="form-success">
+        <h3>Thanks, {{ sent_name }} — got it.</h3>
+        <p>We'll read this properly and reply within a business day.</p>
+        <a href="/contact" class="btn btn-ghost">Send another message</a>
+      </div>
+      {% else %}
+      <form class="contact-form" method="post" action="/contact">
+        <div class="field {{ 'has-error' if errors.name }}">
+          <label for="name">Name</label>
+          <input type="text" id="name" name="name" value="{{ values.name or '' }}">
+          {% if errors.name %}<p class="field-error">{{ errors.name }}</p>{% endif %}
+        </div>
+
+        <div class="field-row">
+          <div class="field {{ 'has-error' if errors.email }}">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" value="{{ values.email or '' }}">
+            {% if errors.email %}<p class="field-error">{{ errors.email }}</p>{% endif %}
+          </div>
+          <div class="field {{ 'has-error' if errors.phone }}">
+            <label for="phone">Phone</label>
+            <input type="tel" id="phone" name="phone" value="{{ values.phone or '' }}">
+            {% if errors.phone %}<p class="field-error">{{ errors.phone }}</p>{% endif %}
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="company">Company</label>
+            <input type="text" id="company" name="company" value="{{ values.company or '' }}">
+          </div>
+          <div class="field">
+            <label for="interest">How can we help?</label>
+            <select id="interest" name="interest">
+              <option value="">Not sure yet</option>
+              <option value="Chat Bot Assistant">Chat Bot Assistant</option>
+              <option value="Automation">Automation (n8n)</option>
+              <option value="Custom ML system">Custom ML / Computer Vision system</option>
+              <option value="Data & Analytics">Data &amp; Analytics</option>
+              <option value="Web / Mobile App">Web / Mobile App</option>
+              <option value="AI Academy / Bootcamp">AI Academy / Bootcamp</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field {{ 'has-error' if errors.message }}">
+          <label for="message">Tell us about your project</label>
+          <textarea id="message" name="message" rows="5">{{ values.message or '' }}</textarea>
+          {% if errors.message %}<p class="field-error">{{ errors.message }}</p>{% endif %}
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block">Send message</button>
+      </form>
+      {% endif %}
+    </div>
+
+  </div>
+</section>
+
+{% endblock %}

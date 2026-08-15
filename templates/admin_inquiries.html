@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Inquiries — DeepVision.ai{% endblock %}
+{% block content %}
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow">Admin</p>
+    <h1>Contact submissions</h1>
+    <p class="section-lede">{{ inquiries|length }} total, newest first. Pulled straight from the database.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    {% if inquiries %}
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Received</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Company</th>
+            <th>Interest</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for inq in inquiries %}
+          <tr>
+            <td>{{ inq.received_at.strftime('%Y-%m-%d %H:%M') if inq.received_at else '' }}</td>
+            <td>{{ inq.name }}</td>
+            <td><a href="mailto:{{ inq.email }}">{{ inq.email }}</a></td>
+            <td>{{ inq.phone or '—' }}</td>
+            <td>{{ inq.company or '—' }}</td>
+            <td>{{ inq.interest or '—' }}</td>
+            <td>{{ inq.message }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p>No submissions yet — they'll show up here as soon as someone uses the contact form.</p>
+    {% endif %}
+  </div>
+</section>
+
+{% endblock %}
