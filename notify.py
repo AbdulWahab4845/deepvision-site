@@ -1,5 +1,6 @@
 import os
 import smtplib
+import socket
 import traceback
 from email.mime.text import MIMEText
 
@@ -34,13 +35,18 @@ def send_notification_email(values: dict) -> None:
         msg["Reply-To"] = values["email"]
 
     try:
-        # Port 587 with starttls is much more reliable on cloud platforms like Railway
-        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=15)
+        # Force IPv4 socket resolution to fix 'Network is unreachable' on Railway
+        addr_info = socket.getaddrinfo("smtp.gmail.com", 587, socket.AF_INET)
+        ipv4_address = addr_info[0][4][0]
+
+        server = smtplib.SMTP(ipv4_address, 587, timeout=15)
+        server.ehlo("gmail.com")
         server.starttls()
+        server.ehlo("gmail.com")
         server.login(SMTP_EMAIL, SMTP_APP_PASSWORD)
         server.sendmail(SMTP_EMAIL, [NOTIFY_TO], msg.as_string())
         server.quit()
-        print("Email sent successfully!")
+        print("Email sent successfully via IPv4!")
     except Exception as e:
         print("=== EMAIL FAILURE DETAILED LOG ===")
         print(f"Error: {e}")
