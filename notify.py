@@ -1,23 +1,15 @@
 import os
 import smtplib
+import traceback
 from email.mime.text import MIMEText
 
-# These come from Railway's Variables tab - never hardcode credentials in code.
 SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
 SMTP_APP_PASSWORD = os.environ.get("SMTP_APP_PASSWORD", "")
 NOTIFY_TO = os.environ.get("NOTIFY_TO", SMTP_EMAIL)
 
 
 def send_notification_email(values: dict) -> None:
-    """
-    Send an email to the studio inbox whenever the contact form is submitted.
-
-    Reply-To is set to the visitor's own email address, so replying to this
-    notification in Gmail (or any mail app) goes straight back to them -
-    no separate reply system on the website is needed.
-    """
     if not SMTP_EMAIL or not SMTP_APP_PASSWORD:
-        # Not configured yet - don't break the form, just skip silently.
         print("Email notification skipped: SMTP_EMAIL / SMTP_APP_PASSWORD not set.")
         return
 
@@ -42,9 +34,15 @@ def send_notification_email(values: dict) -> None:
         msg["Reply-To"] = values["email"]
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
-            server.login(SMTP_EMAIL, SMTP_APP_PASSWORD)
-            server.sendmail(SMTP_EMAIL, [NOTIFY_TO], msg.as_string())
+        # Port 587 with starttls is much more reliable on cloud platforms like Railway
+        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=15)
+        server.starttls()
+        server.login(SMTP_EMAIL, SMTP_APP_PASSWORD)
+        server.sendmail(SMTP_EMAIL, [NOTIFY_TO], msg.as_string())
+        server.quit()
+        print("Email sent successfully!")
     except Exception as e:
-        # Never let an email failure break the contact form submission.
-        print(f"Email notification failed: {e}")
+        print("=== EMAIL FAILURE DETAILED LOG ===")
+        print(f"Error: {e}")
+        traceback.print_exc()
+        print("==================================")
