@@ -26,7 +26,6 @@ def send_notification_email(values: dict) -> None:
         "---\n"
         "Just hit Reply to answer them directly."
     )
-
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = f"New inquiry from {values.get('name') or 'someone'} — DeepVision.ai"
     msg["From"] = SMTP_EMAIL
@@ -35,18 +34,15 @@ def send_notification_email(values: dict) -> None:
         msg["Reply-To"] = values["email"]
 
     try:
-        # Force IPv4 connection to fix Railway's 'Network is unreachable' IPv6 error
-        addr_info = socket.getaddrinfo("smtp.gmail.com", 587, socket.AF_INET)
+        # Force IPv4, use port 465 with SSL directly (no STARTTLS handshake)
+        addr_info = socket.getaddrinfo("smtp.gmail.com", 465, socket.AF_INET)
         ipv4_address = addr_info[0][4][0]
-
-        server = smtplib.SMTP(ipv4_address, 587, timeout=15)
-        server.ehlo("gmail.com")
-        server.starttls()
+        server = smtplib.SMTP_SSL(ipv4_address, 465, timeout=15)
         server.ehlo("gmail.com")
         server.login(SMTP_EMAIL, SMTP_APP_PASSWORD)
         server.sendmail(SMTP_EMAIL, [NOTIFY_TO], msg.as_string())
         server.quit()
-        print("Email sent successfully via IPv4!")
+        print("Email sent successfully via port 465 SSL!")
     except Exception as e:
         print("=== EMAIL FAILURE DETAILED LOG ===")
         print(f"Error: {e}")
