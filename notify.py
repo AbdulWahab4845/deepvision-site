@@ -1,17 +1,14 @@
 import os
-import smtplib
-import socket
-import traceback
-from email.mime.text import MIMEText
+import requests
 
-SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
-SMTP_APP_PASSWORD = os.environ.get("SMTP_APP_PASSWORD", "")
-NOTIFY_TO = os.environ.get("NOTIFY_TO", SMTP_EMAIL)
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+NOTIFY_TO = os.environ.get("NOTIFY_TO", "")
+FROM_EMAIL = os.environ.get("FROM_EMAIL", "onboarding@resend.dev")
 
 
 def send_notification_email(values: dict) -> None:
-    if not SMTP_EMAIL or not SMTP_APP_PASSWORD:
-        print("Email notification skipped: SMTP_EMAIL / SMTP_APP_PASSWORD not set.")
+    if not RESEND_API_KEY or not NOTIFY_TO:
+        print("Email notification skipped: RESEND_API_KEY / NOTIFY_TO not set.")
         return
 
     body = (
@@ -26,25 +23,26 @@ def send_notification_email(values: dict) -> None:
         "---\n"
         "Just hit Reply to answer them directly."
     )
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = f"New inquiry from {values.get('name') or 'someone'} — DeepVision.ai"
-    msg["From"] = SMTP_EMAIL
-    msg["To"] = NOTIFY_TO
-    if values.get("email"):
-        msg["Reply-To"] = values["email"]
 
     try:
-        # Force IPv4, use port 465 with SSL directly (no STARTTLS handshake)
-        addr_info = socket.getaddrinfo("smtp.gmail.com", 465, socket.AF_INET)
-        ipv4_address = addr_info[0][4][0]
-        server = smtplib.SMTP_SSL(ipv4_address, 465, timeout=15)
-        server.ehlo("gmail.com")
-        server.login(SMTP_EMAIL, SMTP_APP_PASSWORD)
-        server.sendmail(SMTP_EMAIL, [NOTIFY_TO], msg.as_string())
-        server.quit()
-        print("Email sent successfully via port 465 SSL!")
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": FROM_EMAIL,
+                "to": [NOTIFY_TO],
+                "reply_to": values.get("email", ""),
+                "subject": f"New inquiry from {values.get('name') or 'someone'} — DeepVision.ai",
+                "text": body,
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        print("Email sent successfully via Resend!")
     except Exception as e:
         print("=== EMAIL FAILURE DETAILED LOG ===")
         print(f"Error: {e}")
-        traceback.print_exc()
         print("==================================")
