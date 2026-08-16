@@ -35,7 +35,7 @@ def send_notification_email(values: dict) -> None:
         msg["Reply-To"] = values["email"]
 
     try:
-        # Force IPv4 socket resolution to fix 'Network is unreachable' on Railway
+        # Force IPv4 connection to fix Railway's 'Network is unreachable' IPv6 error
         addr_info = socket.getaddrinfo("smtp.gmail.com", 587, socket.AF_INET)
         ipv4_address = addr_info[0][4][0]
 
