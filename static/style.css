@@ -51,8 +51,7 @@ a { color: inherit; text-decoration: none; }
 /* Header */
 .site-header {
   position: sticky; top: 0; z-index: 50;
-  background: rgba(16, 19, 43, 0.88);
-  backdrop-filter: blur(10px);
+  background: #10132B;
   border-bottom: 1px solid var(--line);
 }
 .header-inner { display: flex; align-items: center; justify-content: space-between; height: 74px; }
@@ -299,7 +298,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .portfolio-row p { grid-column: 1 / -1; }
 
   .site-nav {
-    position: fixed; inset: 74px 0 0 0; background: var(--bg);
+    position: fixed; inset: 74px 0 0 0; background: #10132B; z-index: 100;
     flex-direction: column; align-items: flex-start; padding: 32px 28px;
     transform: translateX(100%); transition: transform 0.25s ease;
   }
