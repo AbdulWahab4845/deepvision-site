@@ -1,1 +1,35 @@
 
+{% extends "base.html" %}
+{% block title %}Log in — DeepVision.ai{% endblock %}
+{% block content %}
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow">Admin</p>
+    <h1>Log in</h1>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap" style="max-width: 480px;">
+    <div class="contact-form-wrap">
+      {% if errors.form %}<p class="field-error" style="margin-bottom: 16px;">{{ errors.form }}</p>{% endif %}
+      <form class="contact-form" method="post" action="/login">
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" value="{{ values.email or '' }}">
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Log in</button>
+      </form>
+      <p style="margin-top: 18px; font-size: 0.85rem;">
+        Don't have an account? <a href="/signup" style="color: var(--accent);">Sign up</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+{% endblock %}
