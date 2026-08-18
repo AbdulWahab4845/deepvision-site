@@ -26,6 +26,12 @@ from auth import (
 OTP_EXPIRY_MINUTES = 10
 OTP_MAX_ATTEMPTS = 5
 
+# Comma-separated list of emails that automatically get admin access
+# (able to view /admin/inquiries). Set this in Railway Variables.
+ADMIN_EMAILS = {
+    e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()
+}
+
 BASE_DIR = Path(__file__).resolve().parent
 Base.metadata.create_all(bind=engine)
 
@@ -57,51 +63,36 @@ def nav_context(active: str, request: Request = None) -> dict:
         {"href": "/contact", "label": "Contact", "key": "contact"},
     ]
     if request is not None and request.session.get("user_id"):
-        items.append({"href": "/admin/inquiries", "label": "Admin", "key": "admin"})
+        if request.session.get("is_admin"):
+            items.append({"href": "/admin/inquiries", "label": "Admin", "key": "admin"})
         items.append({"href": "/logout", "label": "Logout", "key": "logout"})
+    else:
+        items.append({"href": "/login", "label": "Log in", "key": "login"})
+        items.append({"href": "/signup", "label": "Sign up", "key": "signup"})
     return {"nav_items": items, "active": active}
 
 
-def require_login(request: Request):
-    """Returns a redirect to /login if not logged in, otherwise None.
-    Call this at the top of any route that must be behind auth."""
-    if not request.session.get("user_id"):
-        return RedirectResponse(url="/login", status_code=303)
-    return None
-
+# ---- Public pages (no login required) ----
 
 @app.get("/")
 async def home(request: Request):
-    redirect = require_login(request)
-    if redirect:
-        return redirect
     return templates.TemplateResponse(request, "index.html", {**nav_context("home", request)})
 
 
 @app.get("/about")
 async def about(request: Request):
-    redirect = require_login(request)
-    if redirect:
-        return redirect
     return templates.TemplateResponse(request, "about.html", {**nav_context("about", request)})
 
 
 @app.get("/contact")
 async def contact_get(request: Request):
-    redirect = require_login(request)
-    if redirect:
-        return redirect
     return templates.TemplateResponse(
         request, "contact.html", {**nav_context("contact", request), "errors": {}, "values": {}}
     )
 
 
 @app.post("/contact/send-otp")
-async def send_otp(request: Request, email: str = Form(""), db: Session = Depends(get_db)):
-    redirect = require_login(request)
-    if redirect:
-        return JSONResponse({"ok": False, "error": "Please log in first."}, status_code=401)
-
+async def send_otp(email: str = Form(""), db: Session = Depends(get_db)):
     email = email.strip()
     if not email or not EMAIL_RE.match(email):
         return JSONResponse({"ok": False, "error": "Please enter a valid email address first."}, status_code=422)
@@ -136,10 +127,6 @@ async def contact_post(
     otp: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    redirect = require_login(request)
-    if redirect:
-        return redirect
-
     values = {
         "name": name.strip(),
         "email": email.strip(),
@@ -214,65 +201,61 @@ async def contact_post(
     )
 
 
-# ---- Signup (closed to the public - only used once to create the admin account) ----
+# ---- Signup (open to the public) ----
 
 @app.get("/signup")
 async def signup_get(request: Request):
-    # Public signup is closed. Remove this redirect (and re-enable the block below)
-    # only if you need to create another admin account in the future.
-    return RedirectResponse(url="/login", status_code=303)
+    if request.session.get("user_id"):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(
+        request, "signup.html", {**nav_context("signup", request), "errors": {}, "values": {}}
+    )
 
 
 @app.post("/signup")
-async def signup_post(request: Request):
-    return RedirectResponse(url="/login", status_code=303)
+async def signup_post(
+    request: Request,
+    name: str = Form(""),
+    email: str = Form(""),
+    password: str = Form(""),
+    confirm_password: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    values = {"name": name.strip(), "email": email.strip().lower()}
+    errors = {}
 
+    if not values["name"]:
+        errors["name"] = "Please enter your name."
+    if not values["email"] or not EMAIL_RE.match(values["email"]):
+        errors["email"] = "Please enter a valid email."
+    elif get_user_by_email(db, values["email"]):
+        errors["email"] = "An account with this email already exists."
+    if len(password) < 8:
+        errors["password"] = "Password must be at least 8 characters."
+    elif password != confirm_password:
+        errors["password"] = "Passwords don't match."
 
-# --- Original signup logic, kept here disabled for reference / future re-enabling ---
-# @app.post("/signup")
-# async def signup_post(
-#     request: Request,
-#     name: str = Form(""),
-#     email: str = Form(""),
-#     password: str = Form(""),
-#     confirm_password: str = Form(""),
-#     db: Session = Depends(get_db),
-# ):
-#     values = {"name": name.strip(), "email": email.strip().lower()}
-#     errors = {}
-#
-#     if not values["name"]:
-#         errors["name"] = "Please enter your name."
-#     if not values["email"] or not EMAIL_RE.match(values["email"]):
-#         errors["email"] = "Please enter a valid email."
-#     elif get_user_by_email(db, values["email"]):
-#         errors["email"] = "An account with this email already exists."
-#     if len(password) < 8:
-#         errors["password"] = "Password must be at least 8 characters."
-#     elif password != confirm_password:
-#         errors["password"] = "Passwords don't match."
-#
-#     if errors:
-#         return templates.TemplateResponse(
-#             request, "signup.html",
-#             {**nav_context("", request), "errors": errors, "values": values},
-#             status_code=422,
-#         )
-#
-#     secret = generate_totp_secret()
-#     user = User(
-#         name=values["name"],
-#         email=values["email"],
-#         password_hash=hash_password(password),
-#         totp_secret=secret,
-#         totp_confirmed=False,
-#     )
-#     db.add(user)
-#     db.commit()
-#     db.refresh(user)
-#
-#     request.session["pending_setup_user_id"] = user.id
-#     return RedirectResponse(url="/totp-setup", status_code=303)
+    if errors:
+        return templates.TemplateResponse(
+            request, "signup.html",
+            {**nav_context("signup", request), "errors": errors, "values": values},
+            status_code=422,
+        )
+
+    secret = generate_totp_secret()
+    user = User(
+        name=values["name"],
+        email=values["email"],
+        password_hash=hash_password(password),
+        totp_secret=secret,
+        totp_confirmed=False,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    request.session["pending_setup_user_id"] = user.id
+    return RedirectResponse(url="/totp-setup", status_code=303)
 
 
 @app.get("/totp-setup")
@@ -314,17 +297,23 @@ async def totp_setup_post(request: Request, code: str = Form(""), db: Session = 
         )
 
     user.totp_confirmed = True
+    if user.email in ADMIN_EMAILS:
+        user.is_admin = True
     db.commit()
+
     request.session.pop("pending_setup_user_id", None)
     request.session["user_id"] = user.id
-    return RedirectResponse(url="/admin/inquiries", status_code=303)
+    request.session["is_admin"] = user.is_admin
+    return RedirectResponse(url="/", status_code=303)
 
 
 # ---- Login ----
 
 @app.get("/login")
 async def login_get(request: Request):
-    return templates.TemplateResponse(request, "login.html", {**nav_context("", request), "errors": {}, "values": {}})
+    if request.session.get("user_id"):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(request, "login.html", {**nav_context("login", request), "errors": {}, "values": {}})
 
 
 @app.post("/login")
@@ -339,7 +328,7 @@ async def login_post(
     if not user or not verify_password(password, user.password_hash):
         return templates.TemplateResponse(
             request, "login.html",
-            {**nav_context("", request), "errors": {"form": "Wrong email or password."}, "values": values},
+            {**nav_context("login", request), "errors": {"form": "Wrong email or password."}, "values": values},
             status_code=422,
         )
 
@@ -355,7 +344,7 @@ async def login_post(
 async def login_totp_get(request: Request):
     if not request.session.get("pending_login_user_id"):
         return RedirectResponse(url="/login", status_code=303)
-    return templates.TemplateResponse(request, "login_totp.html", {**nav_context("", request), "error": None})
+    return templates.TemplateResponse(request, "login_totp.html", {**nav_context("login", request), "error": None})
 
 
 @app.post("/login-totp")
@@ -367,28 +356,38 @@ async def login_totp_post(request: Request, code: str = Form(""), db: Session = 
     if not user or not verify_totp_code(user.totp_secret, code):
         return templates.TemplateResponse(
             request, "login_totp.html",
-            {**nav_context("", request), "error": "That code didn't match. Try the current code from your app."},
+            {**nav_context("login", request), "error": "That code didn't match. Try the current code from your app."},
             status_code=422,
         )
 
     request.session.pop("pending_login_user_id", None)
+
+    if user.email in ADMIN_EMAILS and not user.is_admin:
+        user.is_admin = True
+        db.commit()
+
     request.session["user_id"] = user.id
-    return RedirectResponse(url="/admin/inquiries", status_code=303)
+    request.session["is_admin"] = user.is_admin
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/logout")
 async def logout(request: Request):
     request.session.clear()
-    return RedirectResponse(url="/login", status_code=303)
+    return RedirectResponse(url="/", status_code=303)
 
 
-# ---- Admin (now requires login) ----
+# ---- Admin (login required AND must be an admin account) ----
 
 @app.get("/admin/inquiries")
 async def admin_inquiries(request: Request, db: Session = Depends(get_db)):
-    redirect = require_login(request)
-    if redirect:
-        return redirect
+    if not request.session.get("user_id"):
+        return RedirectResponse(url="/login", status_code=303)
+    if not request.session.get("is_admin"):
+        return templates.TemplateResponse(
+            request, "forbidden.html", {**nav_context("", request)}, status_code=403
+        )
+
     inquiries = db.query(Inquiry).order_by(desc(Inquiry.received_at)).all()
     return templates.TemplateResponse(
         request,
