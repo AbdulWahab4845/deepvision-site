@@ -27,6 +27,17 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_RE = re.compile(r"^[0-9+\-().\s]{7,20}$")
 
 
+def as_aware_utc(dt: datetime) -> datetime:
+    """Normalize a datetime to timezone-aware UTC, whether or not it already has tzinfo.
+
+    Postgres returns naive datetimes for TIMESTAMP WITHOUT TIME ZONE columns even
+    though we always write UTC into them, so this makes comparisons safe.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def nav_context(active: str) -> dict:
     return {
         "nav_items": [
@@ -127,7 +138,7 @@ async def contact_post(
                 errors["otp"] = "Please request a verification code first."
             elif otp_record.attempts >= OTP_MAX_ATTEMPTS:
                 errors["otp"] = "Too many attempts. Please request a new code."
-            elif otp_record.expires_at < datetime.now(timezone.utc):
+            elif as_aware_utc(otp_record.expires_at) < datetime.now(timezone.utc):
                 errors["otp"] = "That code expired. Please request a new one."
             elif otp_record.code != otp:
                 otp_record.attempts += 1
