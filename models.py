@@ -46,4 +46,5 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     totp_secret = Column(String(64), nullable=False)
     totp_confirmed = Column(Boolean, default=False)
+    is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
