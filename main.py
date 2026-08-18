@@ -46,11 +46,6 @@ PHONE_RE = re.compile(r"^[0-9+\-().\s]{7,20}$")
 
 
 def as_aware_utc(dt: datetime) -> datetime:
-    """Normalize a datetime to timezone-aware UTC, whether or not it already has tzinfo.
-
-    Postgres returns naive datetimes for TIMESTAMP WITHOUT TIME ZONE columns even
-    though we always write UTC into them, so this makes comparisons safe.
-    """
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
@@ -66,33 +61,50 @@ def nav_context(active: str, request: Request = None) -> dict:
         if request.session.get("is_admin"):
             items.append({"href": "/admin/inquiries", "label": "Admin", "key": "admin"})
         items.append({"href": "/logout", "label": "Logout", "key": "logout"})
-    else:
-        items.append({"href": "/login", "label": "Log in", "key": "login"})
-        items.append({"href": "/signup", "label": "Sign up", "key": "signup"})
     return {"nav_items": items, "active": active}
 
 
-# ---- Public pages (no login required) ----
+def require_login(request: Request):
+    """Returns a redirect to /login if not logged in, otherwise None."""
+    if not request.session.get("user_id"):
+        return RedirectResponse(url="/login", status_code=303)
+    return None
+
+
+# ---- Pages that now require login first ----
 
 @app.get("/")
 async def home(request: Request):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
     return templates.TemplateResponse(request, "index.html", {**nav_context("home", request)})
 
 
 @app.get("/about")
 async def about(request: Request):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
     return templates.TemplateResponse(request, "about.html", {**nav_context("about", request)})
 
 
 @app.get("/contact")
 async def contact_get(request: Request):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
     return templates.TemplateResponse(
         request, "contact.html", {**nav_context("contact", request), "errors": {}, "values": {}}
     )
 
 
 @app.post("/contact/send-otp")
-async def send_otp(email: str = Form(""), db: Session = Depends(get_db)):
+async def send_otp(request: Request, email: str = Form(""), db: Session = Depends(get_db)):
+    redirect = require_login(request)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Please log in first."}, status_code=401)
+
     email = email.strip()
     if not email or not EMAIL_RE.match(email):
         return JSONResponse({"ok": False, "error": "Please enter a valid email address first."}, status_code=422)
@@ -127,6 +139,10 @@ async def contact_post(
     otp: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+
     values = {
         "name": name.strip(),
         "email": email.strip(),
@@ -374,7 +390,7 @@ async def login_totp_post(request: Request, code: str = Form(""), db: Session = 
 @app.get("/logout")
 async def logout(request: Request):
     request.session.clear()
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/login", status_code=303)
 
 
 # ---- Admin (login required AND must be an admin account) ----
