@@ -1,1 +1,36 @@
 
+{% extends "base.html" %}
+{% block title %}Set up two-factor — DeepVision.ai{% endblock %}
+{% block content %}
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow">Admin</p>
+    <h1>Set up your authenticator</h1>
+    <p class="page-hero-lede">Scan this with Google Authenticator, Authy, or any TOTP app, then enter the 6-digit code to confirm.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap" style="max-width: 480px;">
+    <div class="contact-form-wrap" style="text-align: center;">
+      <img src="{{ qr_data_uri }}" alt="TOTP QR code"
+           style="width: 220px; height: 220px; margin: 0 auto 20px; border-radius: 8px; background: #fff; padding: 10px; display: block;">
+      <p style="font-size: 0.78rem; word-break: break-all; font-family: 'JetBrains Mono', monospace; color: var(--muted); margin-bottom: 24px;">
+        Can't scan? Enter this key manually: <strong style="color: var(--ink);">{{ secret }}</strong>
+      </p>
+      <form class="contact-form" method="post" action="/totp-setup">
+        <div class="field {{ 'has-error' if error }}">
+          <label for="code">6-digit code</label>
+          <input type="text" id="code" name="code" inputmode="numeric" maxlength="6"
+                 autocomplete="one-time-code" autofocus
+                 style="text-align: center; letter-spacing: 0.3em; font-size: 1.2rem;">
+          {% if error %}<p class="field-error">{{ error }}</p>{% endif %}
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Confirm &amp; finish setup</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+{% endblock %}
