@@ -46,14 +46,24 @@
         <div class="field-row">
           <div class="field {{ 'has-error' if errors.email }}">
             <label for="email">Email</label>
-            <input type="email" id="email" name="email" value="{{ values.email or '' }}">
+            <div style="display:flex; gap:0.5rem; align-items:flex-start;">
+              <input type="email" id="email" name="email" value="{{ values.email or '' }}" style="flex:1;">
+              <button type="button" id="send-otp-btn" class="btn btn-ghost" style="white-space:nowrap;">Send code</button>
+            </div>
             {% if errors.email %}<p class="field-error">{{ errors.email }}</p>{% endif %}
+            <p id="otp-status" class="field-hint" style="display:none; margin-top:0.4rem;"></p>
           </div>
           <div class="field {{ 'has-error' if errors.phone }}">
             <label for="phone">Phone</label>
             <input type="tel" id="phone" name="phone" value="{{ values.phone or '' }}">
             {% if errors.phone %}<p class="field-error">{{ errors.phone }}</p>{% endif %}
           </div>
+        </div>
+
+        <div class="field {{ 'has-error' if errors.otp }}" id="otp-field" style="{{ '' if errors.otp else 'display:none;' }}">
+          <label for="otp">Verification code</label>
+          <input type="text" id="otp" name="otp" inputmode="numeric" maxlength="6" placeholder="6-digit code" value="">
+          {% if errors.otp %}<p class="field-error">{{ errors.otp }}</p>{% endif %}
         </div>
 
         <div class="field-row">
@@ -88,5 +98,71 @@
 
   </div>
 </section>
+
+<script>
+(function () {
+  var sendBtn = document.getElementById("send-otp-btn");
+  var emailInput = document.getElementById("email");
+  var otpField = document.getElementById("otp-field");
+  var statusEl = document.getElementById("otp-status");
+  if (!sendBtn) return;
+
+  var cooldownTimer = null;
+
+  function startCooldown(seconds) {
+    sendBtn.disabled = true;
+    var remaining = seconds;
+    sendBtn.textContent = "Resend (" + remaining + "s)";
+    cooldownTimer = setInterval(function () {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(cooldownTimer);
+        sendBtn.disabled = false;
+        sendBtn.textContent = "Resend code";
+      } else {
+        sendBtn.textContent = "Resend (" + remaining + "s)";
+      }
+    }, 1000);
+  }
+
+  sendBtn.addEventListener("click", function () {
+    var email = emailInput.value.trim();
+    if (!email) {
+      statusEl.style.display = "block";
+      statusEl.style.color = "#e07a7a";
+      statusEl.textContent = "Enter your email above first.";
+      return;
+    }
+
+    sendBtn.disabled = true;
+    statusEl.style.display = "block";
+    statusEl.style.color = "";
+    statusEl.textContent = "Sending code…";
+
+    var body = new URLSearchParams();
+    body.append("email", email);
+
+    fetch("/contact/send-otp", { method: "POST", body: body })
+      .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (result) {
+        if (result.ok && result.data.ok) {
+          statusEl.style.color = "#7abf7a";
+          statusEl.textContent = result.data.message;
+          otpField.style.display = "";
+          startCooldown(30);
+        } else {
+          statusEl.style.color = "#e07a7a";
+          statusEl.textContent = result.data.error || "Something went wrong. Please try again.";
+          sendBtn.disabled = false;
+        }
+      })
+      .catch(function () {
+        statusEl.style.color = "#e07a7a";
+        statusEl.textContent = "Network error. Please try again.";
+        sendBtn.disabled = false;
+      });
+  });
+})();
+</script>
 
 {% endblock %}
