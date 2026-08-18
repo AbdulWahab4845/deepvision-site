@@ -1,13 +1,19 @@
+import random
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 from database import Base, engine, get_db
-from models import Inquiry
-from notify import send_notification_email
+from models import Inquiry, OtpCode
+from notify import send_notification_email, send_otp_email
+
+OTP_EXPIRY_MINUTES = 10
+OTP_MAX_ATTEMPTS = 5
 
 BASE_DIR = Path(__file__).resolve().parent
 Base.metadata.create_all(bind=engine)
@@ -49,6 +55,29 @@ async def contact_get(request: Request):
     )
 
 
+@app.post("/contact/send-otp")
+async def send_otp(email: str = Form(""), db: Session = Depends(get_db)):
+    email = email.strip()
+    if not email or not EMAIL_RE.match(email):
+        return JSONResponse({"ok": False, "error": "Please enter a valid email address first."}, status_code=422)
+
+    code = f"{random.randint(0, 999999):06d}"
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)
+
+    otp = OtpCode(email=email, code=code, expires_at=expires_at)
+    db.add(otp)
+    db.commit()
+
+    sent = send_otp_email(email, code)
+    if not sent:
+        return JSONResponse(
+            {"ok": False, "error": "Couldn't send the verification email. Please try again in a moment."},
+            status_code=502,
+        )
+
+    return JSONResponse({"ok": True, "message": f"Code sent to {email}. It expires in {OTP_EXPIRY_MINUTES} minutes."})
+
+
 @app.post("/contact")
 async def contact_post(
     request: Request,
@@ -59,6 +88,7 @@ async def contact_post(
     company: str = Form(""),
     interest: str = Form(""),
     message: str = Form(""),
+    otp: str = Form(""),
     db: Session = Depends(get_db),
 ):
     values = {
@@ -69,6 +99,7 @@ async def contact_post(
         "interest": interest.strip(),
         "message": message.strip(),
     }
+    otp = otp.strip()
     errors = {}
     if not values["name"]:
         errors["name"] = "Please tell us your name."
@@ -81,6 +112,28 @@ async def contact_post(
     if not values["message"]:
         errors["message"] = "Let us know a little about your project."
 
+    otp_record = None
+    if not errors.get("email"):
+        if not otp:
+            errors["otp"] = "Please verify your email with the code we sent."
+        else:
+            otp_record = (
+                db.query(OtpCode)
+                .filter(OtpCode.email == values["email"], OtpCode.verified == False)  # noqa: E712
+                .order_by(desc(OtpCode.created_at))
+                .first()
+            )
+            if not otp_record:
+                errors["otp"] = "Please request a verification code first."
+            elif otp_record.attempts >= OTP_MAX_ATTEMPTS:
+                errors["otp"] = "Too many attempts. Please request a new code."
+            elif otp_record.expires_at < datetime.now(timezone.utc):
+                errors["otp"] = "That code expired. Please request a new one."
+            elif otp_record.code != otp:
+                otp_record.attempts += 1
+                db.commit()
+                errors["otp"] = "That code doesn't match. Please check and try again."
+
     if errors:
         return templates.TemplateResponse(
             request,
@@ -91,6 +144,10 @@ async def contact_post(
 
     inquiry = Inquiry(**values)
     db.add(inquiry)
+
+    if otp_record:
+        otp_record.verified = True
+
     db.commit()
 
     # Offload email sending to background task
