@@ -1,13 +1,10 @@
 from datetime import datetime, timezone
-
 from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text
-
 from database import Base
 
 
 class OtpCode(Base):
     __tablename__ = "otp_codes"
-
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(160), nullable=False, index=True)
     code = Column(String(6), nullable=False)
@@ -19,7 +16,6 @@ class OtpCode(Base):
 
 class Inquiry(Base):
     __tablename__ = "inquiries"
-
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(120), nullable=False)
     email = Column(String(160), nullable=False, index=True)
@@ -40,3 +36,14 @@ class Inquiry(Base):
             "message": self.message,
             "received_at": self.received_at.isoformat() if self.received_at else None,
         }
+
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False)
+    email = Column(String(160), nullable=False, unique=True, index=True)
+    password_hash = Column(String(255), nullable=False)
+    totp_secret = Column(String(64), nullable=False)
+    totp_confirmed = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
