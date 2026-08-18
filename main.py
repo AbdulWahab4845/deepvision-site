@@ -1,16 +1,27 @@
+import os
 import random
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 from database import Base, engine, get_db
-from models import Inquiry, OtpCode
+from models import Inquiry, OtpCode, User
 from notify import send_notification_email, send_otp_email
+from auth import (
+    hash_password,
+    verify_password,
+    generate_totp_secret,
+    get_totp_uri,
+    verify_totp_code,
+    qr_code_data_uri,
+    get_user_by_email,
+)
 
 OTP_EXPIRY_MINUTES = 10
 OTP_MAX_ATTEMPTS = 5
@@ -19,6 +30,7 @@ BASE_DIR = Path(__file__).resolve().parent
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="DeepVision.ai")
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET", "change-me-in-production"))
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
@@ -161,7 +173,6 @@ async def contact_post(
 
     db.commit()
 
-    # Offload email sending to background task
     background_tasks.add_task(send_notification_email, values)
 
     return templates.TemplateResponse(
@@ -177,8 +188,172 @@ async def contact_post(
     )
 
 
+# ---- Signup ----
+
+@app.get("/signup")
+async def signup_get(request: Request):
+    return templates.TemplateResponse(request, "signup.html", {**nav_context(""), "errors": {}, "values": {}})
+
+
+@app.post("/signup")
+async def signup_post(
+    request: Request,
+    name: str = Form(""),
+    email: str = Form(""),
+    password: str = Form(""),
+    confirm_password: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    values = {"name": name.strip(), "email": email.strip().lower()}
+    errors = {}
+
+    if not values["name"]:
+        errors["name"] = "Please enter your name."
+    if not values["email"] or not EMAIL_RE.match(values["email"]):
+        errors["email"] = "Please enter a valid email."
+    elif get_user_by_email(db, values["email"]):
+        errors["email"] = "An account with this email already exists."
+    if len(password) < 8:
+        errors["password"] = "Password must be at least 8 characters."
+    elif password != confirm_password:
+        errors["password"] = "Passwords don't match."
+
+    if errors:
+        return templates.TemplateResponse(
+            request, "signup.html",
+            {**nav_context(""), "errors": errors, "values": values},
+            status_code=422,
+        )
+
+    secret = generate_totp_secret()
+    user = User(
+        name=values["name"],
+        email=values["email"],
+        password_hash=hash_password(password),
+        totp_secret=secret,
+        totp_confirmed=False,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    request.session["pending_setup_user_id"] = user.id
+    return RedirectResponse(url="/totp-setup", status_code=303)
+
+
+@app.get("/totp-setup")
+async def totp_setup_get(request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("pending_setup_user_id")
+    if not user_id:
+        return RedirectResponse(url="/signup", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return RedirectResponse(url="/signup", status_code=303)
+
+    uri = get_totp_uri(user.totp_secret, user.email)
+    return templates.TemplateResponse(
+        request, "totp_setup.html",
+        {**nav_context(""), "qr_data_uri": qr_code_data_uri(uri), "secret": user.totp_secret, "error": None},
+    )
+
+
+@app.post("/totp-setup")
+async def totp_setup_post(request: Request, code: str = Form(""), db: Session = Depends(get_db)):
+    user_id = request.session.get("pending_setup_user_id")
+    if not user_id:
+        return RedirectResponse(url="/signup", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return RedirectResponse(url="/signup", status_code=303)
+
+    if not verify_totp_code(user.totp_secret, code):
+        uri = get_totp_uri(user.totp_secret, user.email)
+        return templates.TemplateResponse(
+            request, "totp_setup.html",
+            {
+                **nav_context(""),
+                "qr_data_uri": qr_code_data_uri(uri),
+                "secret": user.totp_secret,
+                "error": "That code didn't match. Try the current code from your app.",
+            },
+            status_code=422,
+        )
+
+    user.totp_confirmed = True
+    db.commit()
+    request.session.pop("pending_setup_user_id", None)
+    request.session["user_id"] = user.id
+    return RedirectResponse(url="/admin/inquiries", status_code=303)
+
+
+# ---- Login ----
+
+@app.get("/login")
+async def login_get(request: Request):
+    return templates.TemplateResponse(request, "login.html", {**nav_context(""), "errors": {}, "values": {}})
+
+
+@app.post("/login")
+async def login_post(
+    request: Request,
+    email: str = Form(""),
+    password: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    values = {"email": email.strip().lower()}
+    user = get_user_by_email(db, values["email"])
+    if not user or not verify_password(password, user.password_hash):
+        return templates.TemplateResponse(
+            request, "login.html",
+            {**nav_context(""), "errors": {"form": "Wrong email or password."}, "values": values},
+            status_code=422,
+        )
+
+    if not user.totp_confirmed:
+        request.session["pending_setup_user_id"] = user.id
+        return RedirectResponse(url="/totp-setup", status_code=303)
+
+    request.session["pending_login_user_id"] = user.id
+    return RedirectResponse(url="/login-totp", status_code=303)
+
+
+@app.get("/login-totp")
+async def login_totp_get(request: Request):
+    if not request.session.get("pending_login_user_id"):
+        return RedirectResponse(url="/login", status_code=303)
+    return templates.TemplateResponse(request, "login_totp.html", {**nav_context(""), "error": None})
+
+
+@app.post("/login-totp")
+async def login_totp_post(request: Request, code: str = Form(""), db: Session = Depends(get_db)):
+    user_id = request.session.get("pending_login_user_id")
+    if not user_id:
+        return RedirectResponse(url="/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not verify_totp_code(user.totp_secret, code):
+        return templates.TemplateResponse(
+            request, "login_totp.html",
+            {**nav_context(""), "error": "That code didn't match. Try the current code from your app."},
+            status_code=422,
+        )
+
+    request.session.pop("pending_login_user_id", None)
+    request.session["user_id"] = user.id
+    return RedirectResponse(url="/admin/inquiries", status_code=303)
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=303)
+
+
+# ---- Admin (now requires login) ----
+
 @app.get("/admin/inquiries")
 async def admin_inquiries(request: Request, db: Session = Depends(get_db)):
+    if not request.session.get("user_id"):
+        return RedirectResponse(url="/login", status_code=303)
     inquiries = db.query(Inquiry).order_by(desc(Inquiry.received_at)).all()
     return templates.TemplateResponse(
         request,
