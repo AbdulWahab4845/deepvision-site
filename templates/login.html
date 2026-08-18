@@ -18,7 +18,10 @@
         </div>
         <div class="field">
           <label for="password">Password</label>
-          <input type="password" id="password" name="password">
+          <div class="password-wrap">
+            <input type="password" id="password" name="password">
+            <button type="button" class="password-toggle" data-target="password">Show</button>
+          </div>
         </div>
         <button type="submit" class="btn btn-primary btn-block">Log in</button>
       </form>
@@ -28,4 +31,19 @@
     </div>
   </div>
 </section>
+
+<script>
+document.querySelectorAll('.password-toggle').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var input = document.getElementById(btn.dataset.target);
+    if (input.type === 'password') {
+      input.type = 'text';
+      btn.textContent = 'Hide';
+    } else {
+      input.type = 'password';
+      btn.textContent = 'Show';
+    }
+  });
+});
+</script>
 {% endblock %}
