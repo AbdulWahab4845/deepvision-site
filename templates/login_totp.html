@@ -1,1 +1,30 @@
 
+{% extends "base.html" %}
+{% block title %}Verify code — DeepVision.ai{% endblock %}
+{% block content %}
+
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow">Admin</p>
+    <h1>Enter your authenticator code</h1>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap" style="max-width: 480px;">
+    <div class="contact-form-wrap">
+      <form class="contact-form" method="post" action="/login-totp">
+        <div class="field {{ 'has-error' if error }}">
+          <label for="code">6-digit code</label>
+          <input type="text" id="code" name="code" inputmode="numeric" maxlength="6"
+                 autocomplete="one-time-code" autofocus
+                 style="text-align: center; letter-spacing: 0.3em; font-size: 1.2rem;">
+          {% if error %}<p class="field-error">{{ error }}</p>{% endif %}
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Verify &amp; log in</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+{% endblock %}
