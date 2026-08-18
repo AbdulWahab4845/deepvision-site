@@ -61,25 +61,46 @@ def nav_context(active: str) -> dict:
     }
 
 
+def require_login(request: Request):
+    """Returns a redirect to /login if not logged in, otherwise None.
+    Call this at the top of any route that must be behind auth."""
+    if not request.session.get("user_id"):
+        return RedirectResponse(url="/login", status_code=303)
+    return None
+
+
 @app.get("/")
 async def home(request: Request):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
     return templates.TemplateResponse(request, "index.html", {**nav_context("home")})
 
 
 @app.get("/about")
 async def about(request: Request):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
     return templates.TemplateResponse(request, "about.html", {**nav_context("about")})
 
 
 @app.get("/contact")
 async def contact_get(request: Request):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
     return templates.TemplateResponse(
         request, "contact.html", {**nav_context("contact"), "errors": {}, "values": {}}
     )
 
 
 @app.post("/contact/send-otp")
-async def send_otp(email: str = Form(""), db: Session = Depends(get_db)):
+async def send_otp(request: Request, email: str = Form(""), db: Session = Depends(get_db)):
+    redirect = require_login(request)
+    if redirect:
+        return JSONResponse({"ok": False, "error": "Please log in first."}, status_code=401)
+
     email = email.strip()
     if not email or not EMAIL_RE.match(email):
         return JSONResponse({"ok": False, "error": "Please enter a valid email address first."}, status_code=422)
@@ -114,6 +135,10 @@ async def contact_post(
     otp: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+
     values = {
         "name": name.strip(),
         "email": email.strip(),
@@ -352,8 +377,9 @@ async def logout(request: Request):
 
 @app.get("/admin/inquiries")
 async def admin_inquiries(request: Request, db: Session = Depends(get_db)):
-    if not request.session.get("user_id"):
-        return RedirectResponse(url="/login", status_code=303)
+    redirect = require_login(request)
+    if redirect:
+        return redirect
     inquiries = db.query(Inquiry).order_by(desc(Inquiry.received_at)).all()
     return templates.TemplateResponse(
         request,
