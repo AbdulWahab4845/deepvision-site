@@ -50,15 +50,16 @@ def as_aware_utc(dt: datetime) -> datetime:
     return dt
 
 
-def nav_context(active: str) -> dict:
-    return {
-        "nav_items": [
-            {"href": "/", "label": "Home", "key": "home"},
-            {"href": "/about", "label": "About", "key": "about"},
-            {"href": "/contact", "label": "Contact", "key": "contact"},
-        ],
-        "active": active,
-    }
+def nav_context(active: str, request: Request = None) -> dict:
+    items = [
+        {"href": "/", "label": "Home", "key": "home"},
+        {"href": "/about", "label": "About", "key": "about"},
+        {"href": "/contact", "label": "Contact", "key": "contact"},
+    ]
+    if request is not None and request.session.get("user_id"):
+        items.append({"href": "/admin/inquiries", "label": "Admin", "key": "admin"})
+        items.append({"href": "/logout", "label": "Logout", "key": "logout"})
+    return {"nav_items": items, "active": active}
 
 
 def require_login(request: Request):
@@ -74,7 +75,7 @@ async def home(request: Request):
     redirect = require_login(request)
     if redirect:
         return redirect
-    return templates.TemplateResponse(request, "index.html", {**nav_context("home")})
+    return templates.TemplateResponse(request, "index.html", {**nav_context("home", request)})
 
 
 @app.get("/about")
@@ -82,7 +83,7 @@ async def about(request: Request):
     redirect = require_login(request)
     if redirect:
         return redirect
-    return templates.TemplateResponse(request, "about.html", {**nav_context("about")})
+    return templates.TemplateResponse(request, "about.html", {**nav_context("about", request)})
 
 
 @app.get("/contact")
@@ -91,7 +92,7 @@ async def contact_get(request: Request):
     if redirect:
         return redirect
     return templates.TemplateResponse(
-        request, "contact.html", {**nav_context("contact"), "errors": {}, "values": {}}
+        request, "contact.html", {**nav_context("contact", request), "errors": {}, "values": {}}
     )
 
 
@@ -186,7 +187,7 @@ async def contact_post(
         return templates.TemplateResponse(
             request,
             "contact.html",
-            {**nav_context("contact"), "errors": errors, "values": values},
+            {**nav_context("contact", request), "errors": errors, "values": values},
             status_code=422,
         )
 
@@ -204,7 +205,7 @@ async def contact_post(
         request,
         "contact.html",
         {
-            **nav_context("contact"),
+            **nav_context("contact", request),
             "errors": {},
             "values": {},
             "success": True,
@@ -213,57 +214,65 @@ async def contact_post(
     )
 
 
-# ---- Signup ----
+# ---- Signup (closed to the public - only used once to create the admin account) ----
 
 @app.get("/signup")
 async def signup_get(request: Request):
-    return templates.TemplateResponse(request, "signup.html", {**nav_context(""), "errors": {}, "values": {}})
+    # Public signup is closed. Remove this redirect (and re-enable the block below)
+    # only if you need to create another admin account in the future.
+    return RedirectResponse(url="/login", status_code=303)
 
 
 @app.post("/signup")
-async def signup_post(
-    request: Request,
-    name: str = Form(""),
-    email: str = Form(""),
-    password: str = Form(""),
-    confirm_password: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    values = {"name": name.strip(), "email": email.strip().lower()}
-    errors = {}
+async def signup_post(request: Request):
+    return RedirectResponse(url="/login", status_code=303)
 
-    if not values["name"]:
-        errors["name"] = "Please enter your name."
-    if not values["email"] or not EMAIL_RE.match(values["email"]):
-        errors["email"] = "Please enter a valid email."
-    elif get_user_by_email(db, values["email"]):
-        errors["email"] = "An account with this email already exists."
-    if len(password) < 8:
-        errors["password"] = "Password must be at least 8 characters."
-    elif password != confirm_password:
-        errors["password"] = "Passwords don't match."
 
-    if errors:
-        return templates.TemplateResponse(
-            request, "signup.html",
-            {**nav_context(""), "errors": errors, "values": values},
-            status_code=422,
-        )
-
-    secret = generate_totp_secret()
-    user = User(
-        name=values["name"],
-        email=values["email"],
-        password_hash=hash_password(password),
-        totp_secret=secret,
-        totp_confirmed=False,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    request.session["pending_setup_user_id"] = user.id
-    return RedirectResponse(url="/totp-setup", status_code=303)
+# --- Original signup logic, kept here disabled for reference / future re-enabling ---
+# @app.post("/signup")
+# async def signup_post(
+#     request: Request,
+#     name: str = Form(""),
+#     email: str = Form(""),
+#     password: str = Form(""),
+#     confirm_password: str = Form(""),
+#     db: Session = Depends(get_db),
+# ):
+#     values = {"name": name.strip(), "email": email.strip().lower()}
+#     errors = {}
+#
+#     if not values["name"]:
+#         errors["name"] = "Please enter your name."
+#     if not values["email"] or not EMAIL_RE.match(values["email"]):
+#         errors["email"] = "Please enter a valid email."
+#     elif get_user_by_email(db, values["email"]):
+#         errors["email"] = "An account with this email already exists."
+#     if len(password) < 8:
+#         errors["password"] = "Password must be at least 8 characters."
+#     elif password != confirm_password:
+#         errors["password"] = "Passwords don't match."
+#
+#     if errors:
+#         return templates.TemplateResponse(
+#             request, "signup.html",
+#             {**nav_context("", request), "errors": errors, "values": values},
+#             status_code=422,
+#         )
+#
+#     secret = generate_totp_secret()
+#     user = User(
+#         name=values["name"],
+#         email=values["email"],
+#         password_hash=hash_password(password),
+#         totp_secret=secret,
+#         totp_confirmed=False,
+#     )
+#     db.add(user)
+#     db.commit()
+#     db.refresh(user)
+#
+#     request.session["pending_setup_user_id"] = user.id
+#     return RedirectResponse(url="/totp-setup", status_code=303)
 
 
 @app.get("/totp-setup")
@@ -278,7 +287,7 @@ async def totp_setup_get(request: Request, db: Session = Depends(get_db)):
     uri = get_totp_uri(user.totp_secret, user.email)
     return templates.TemplateResponse(
         request, "totp_setup.html",
-        {**nav_context(""), "qr_data_uri": qr_code_data_uri(uri), "secret": user.totp_secret, "error": None},
+        {**nav_context("", request), "qr_data_uri": qr_code_data_uri(uri), "secret": user.totp_secret, "error": None},
     )
 
 
@@ -296,7 +305,7 @@ async def totp_setup_post(request: Request, code: str = Form(""), db: Session = 
         return templates.TemplateResponse(
             request, "totp_setup.html",
             {
-                **nav_context(""),
+                **nav_context("", request),
                 "qr_data_uri": qr_code_data_uri(uri),
                 "secret": user.totp_secret,
                 "error": "That code didn't match. Try the current code from your app.",
@@ -315,7 +324,7 @@ async def totp_setup_post(request: Request, code: str = Form(""), db: Session = 
 
 @app.get("/login")
 async def login_get(request: Request):
-    return templates.TemplateResponse(request, "login.html", {**nav_context(""), "errors": {}, "values": {}})
+    return templates.TemplateResponse(request, "login.html", {**nav_context("", request), "errors": {}, "values": {}})
 
 
 @app.post("/login")
@@ -330,7 +339,7 @@ async def login_post(
     if not user or not verify_password(password, user.password_hash):
         return templates.TemplateResponse(
             request, "login.html",
-            {**nav_context(""), "errors": {"form": "Wrong email or password."}, "values": values},
+            {**nav_context("", request), "errors": {"form": "Wrong email or password."}, "values": values},
             status_code=422,
         )
 
@@ -346,7 +355,7 @@ async def login_post(
 async def login_totp_get(request: Request):
     if not request.session.get("pending_login_user_id"):
         return RedirectResponse(url="/login", status_code=303)
-    return templates.TemplateResponse(request, "login_totp.html", {**nav_context(""), "error": None})
+    return templates.TemplateResponse(request, "login_totp.html", {**nav_context("", request), "error": None})
 
 
 @app.post("/login-totp")
@@ -358,7 +367,7 @@ async def login_totp_post(request: Request, code: str = Form(""), db: Session = 
     if not user or not verify_totp_code(user.totp_secret, code):
         return templates.TemplateResponse(
             request, "login_totp.html",
-            {**nav_context(""), "error": "That code didn't match. Try the current code from your app."},
+            {**nav_context("", request), "error": "That code didn't match. Try the current code from your app."},
             status_code=422,
         )
 
@@ -384,5 +393,5 @@ async def admin_inquiries(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "admin_inquiries.html",
-        {**nav_context(""), "inquiries": inquiries},
+        {**nav_context("", request), "inquiries": inquiries},
     )
