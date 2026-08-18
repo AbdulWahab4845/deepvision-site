@@ -58,8 +58,6 @@ def nav_context(active: str, request: Request = None) -> dict:
         {"href": "/contact", "label": "Contact", "key": "contact"},
     ]
     if request is not None and request.session.get("user_id"):
-        if request.session.get("is_admin"):
-            items.append({"href": "/admin/inquiries", "label": "Admin", "key": "admin"})
         items.append({"href": "/logout", "label": "Logout", "key": "logout"})
     return {"nav_items": items, "active": active}
 
@@ -71,7 +69,7 @@ def require_login(request: Request):
     return None
 
 
-# ---- Pages that now require login first ----
+# ---- Pages that require login first ----
 
 @app.get("/")
 async def home(request: Request):
@@ -317,13 +315,18 @@ async def totp_setup_post(request: Request, code: str = Form(""), db: Session = 
         user.is_admin = True
     db.commit()
 
+    was_admin_setup = request.session.get("pending_setup_was_admin", False)
     request.session.pop("pending_setup_user_id", None)
+    request.session.pop("pending_setup_was_admin", None)
     request.session["user_id"] = user.id
     request.session["is_admin"] = user.is_admin
+
+    if was_admin_setup and user.is_admin:
+        return RedirectResponse(url="/admin/inquiries", status_code=303)
     return RedirectResponse(url="/", status_code=303)
 
 
-# ---- Login ----
+# ---- Login (for normal users) ----
 
 @app.get("/login")
 async def login_get(request: Request):
@@ -387,18 +390,92 @@ async def login_totp_post(request: Request, code: str = Form(""), db: Session = 
     return RedirectResponse(url="/", status_code=303)
 
 
+# ---- Admin login (separate entry point, hidden from normal users) ----
+
+@app.get("/admin/login")
+async def admin_login_get(request: Request):
+    if request.session.get("user_id") and request.session.get("is_admin"):
+        return RedirectResponse(url="/admin/inquiries", status_code=303)
+    return templates.TemplateResponse(
+        request, "admin_login.html", {**nav_context("", request), "errors": {}, "values": {}}
+    )
+
+
+@app.post("/admin/login")
+async def admin_login_post(
+    request: Request,
+    email: str = Form(""),
+    password: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    values = {"email": email.strip().lower()}
+    user = get_user_by_email(db, values["email"])
+
+    if not user or not verify_password(password, user.password_hash):
+        return templates.TemplateResponse(
+            request, "admin_login.html",
+            {**nav_context("", request), "errors": {"form": "Wrong email or password."}, "values": values},
+            status_code=422,
+        )
+
+    if user.email not in ADMIN_EMAILS and not user.is_admin:
+        return templates.TemplateResponse(
+            request, "admin_login.html",
+            {**nav_context("", request), "errors": {"form": "This account doesn't have admin access."}, "values": values},
+            status_code=403,
+        )
+
+    if not user.totp_confirmed:
+        request.session["pending_setup_user_id"] = user.id
+        request.session["pending_setup_was_admin"] = True
+        return RedirectResponse(url="/totp-setup", status_code=303)
+
+    request.session["pending_admin_login_user_id"] = user.id
+    return RedirectResponse(url="/admin/login-totp", status_code=303)
+
+
+@app.get("/admin/login-totp")
+async def admin_login_totp_get(request: Request):
+    if not request.session.get("pending_admin_login_user_id"):
+        return RedirectResponse(url="/admin/login", status_code=303)
+    return templates.TemplateResponse(request, "admin_login_totp.html", {**nav_context("", request), "error": None})
+
+
+@app.post("/admin/login-totp")
+async def admin_login_totp_post(request: Request, code: str = Form(""), db: Session = Depends(get_db)):
+    user_id = request.session.get("pending_admin_login_user_id")
+    if not user_id:
+        return RedirectResponse(url="/admin/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not verify_totp_code(user.totp_secret, code):
+        return templates.TemplateResponse(
+            request, "admin_login_totp.html",
+            {**nav_context("", request), "error": "That code didn't match. Try the current code from your app."},
+            status_code=422,
+        )
+
+    request.session.pop("pending_admin_login_user_id", None)
+    if user.email in ADMIN_EMAILS and not user.is_admin:
+        user.is_admin = True
+        db.commit()
+
+    request.session["user_id"] = user.id
+    request.session["is_admin"] = user.is_admin
+    return RedirectResponse(url="/admin/inquiries", status_code=303)
+
+
 @app.get("/logout")
 async def logout(request: Request):
     request.session.clear()
     return RedirectResponse(url="/login", status_code=303)
 
 
-# ---- Admin (login required AND must be an admin account) ----
+# ---- Admin (must be logged in AND be an admin account) ----
 
 @app.get("/admin/inquiries")
 async def admin_inquiries(request: Request, db: Session = Depends(get_db)):
     if not request.session.get("user_id"):
-        return RedirectResponse(url="/login", status_code=303)
+        return RedirectResponse(url="/admin/login", status_code=303)
     if not request.session.get("is_admin"):
         return templates.TemplateResponse(
             request, "forbidden.html", {**nav_context("", request)}, status_code=403
