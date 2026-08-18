@@ -1,8 +1,20 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text
 
 from database import Base
+
+
+class OtpCode(Base):
+    __tablename__ = "otp_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(160), nullable=False, index=True)
+    code = Column(String(6), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    verified = Column(Boolean, default=False)
+    attempts = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class Inquiry(Base):
