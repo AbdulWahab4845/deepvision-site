@@ -1,147 +1,70 @@
-# ---- Signup (open to the public, simple email verification — no authenticator app) ----
+{% extends "base.html" %}
+{% block title %}Sign up — DeepVision.ai{% endblock %}
+{% block content %}
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow">Account</p>
+    <h1>Create an account</h1>
+  </div>
+</section>
+<section class="section">
+  <div class="wrap" style="max-width: 480px;">
+    <div class="contact-form-wrap">
+      {% if errors.email == "An account with this email already exists." %}
+      <p class="field-error" style="margin-bottom: 16px;">
+        An account with this email already exists.
+        <a href="/login" style="color: var(--accent); text-decoration: underline;">Log in instead</a>.
+      </p>
+      {% elif errors.form %}
+      <p class="field-error" style="margin-bottom: 16px;">{{ errors.form }}</p>
+      {% endif %}
+      <form class="contact-form" method="post" action="/signup">
+        <div class="field {{ 'has-error' if errors.name }}">
+          <label for="name">Name</label>
+          <input type="text" id="name" name="name" value="{{ values.name or '' }}">
+          {% if errors.name %}<p class="field-error">{{ errors.name }}</p>{% endif %}
+        </div>
+        <div class="field {{ 'has-error' if errors.email }}">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" value="{{ values.email or '' }}">
+          {% if errors.email %}<p class="field-error">{{ errors.email }}</p>{% endif %}
+        </div>
+        <div class="field {{ 'has-error' if errors.password }}">
+          <label for="password">Password</label>
+          <div class="password-wrap">
+            <input type="password" id="password" name="password">
+            <button type="button" class="password-toggle" data-target="password">Show</button>
+          </div>
+          {% if errors.password %}<p class="field-error">{{ errors.password }}</p>{% endif %}
+        </div>
+        <div class="field">
+          <label for="confirm_password">Confirm password</label>
+          <div class="password-wrap">
+            <input type="password" id="confirm_password" name="confirm_password">
+            <button type="button" class="password-toggle" data-target="confirm_password">Show</button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Create account</button>
+      </form>
+      <p style="margin-top: 18px; font-size: 0.85rem;">
+        Already have an account? <a href="/login" style="color: var(--accent);">Log in</a>
+      </p>
+    </div>
+  </div>
+</section>
 
-@app.get("/signup")
-async def signup_get(request: Request):
-    if request.session.get("user_id"):
-        return RedirectResponse(url="/", status_code=303)
-    return templates.TemplateResponse(
-        request, "signup.html", {**nav_context("signup", request), "errors": {}, "values": {}}
-    )
-
-
-@app.post("/signup")
-async def signup_post(
-    request: Request,
-    name: str = Form(""),
-    email: str = Form(""),
-    password: str = Form(""),
-    confirm_password: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    values = {"name": name.strip(), "email": email.strip().lower()}
-    errors = {}
-
-    if not values["name"]:
-        errors["name"] = "Please enter your name."
-    if not values["email"] or not EMAIL_RE.match(values["email"]):
-        errors["email"] = "Please enter a valid email."
-    elif get_user_by_email(db, values["email"]):
-        errors["email"] = "An account with this email already exists."
-    elif values["email"] in ADMIN_EMAILS:
-        errors["email"] = "This email uses a separate admin login."
-    if len(password) < 8:
-        errors["password"] = "Password must be at least 8 characters."
-    elif password != confirm_password:
-        errors["password"] = "Passwords don't match."
-
-    if errors:
-        return templates.TemplateResponse(
-            request, "signup.html",
-            {**nav_context("signup", request), "errors": errors, "values": values},
-            status_code=422,
-        )
-
-    code = f"{random.randint(0, 999999):06d}"
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)
-    otp = OtpCode(email=values["email"], code=code, expires_at=expires_at)
-    db.add(otp)
-    db.commit()
-
-    sent = send_otp_email(values["email"], code)
-    if not sent:
-        return templates.TemplateResponse(
-            request, "signup.html",
-            {
-                **nav_context("signup", request),
-                "errors": {"form": "Couldn't send the verification email. Please try again in a moment."},
-                "values": values,
-            },
-            status_code=502,
-        )
-
-    request.session["pending_signup"] = {
-        "name": values["name"],
-        "email": values["email"],
-        "password_hash": hash_password(password),
+<script>
+document.querySelectorAll('.password-toggle').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var input = document.getElementById(btn.dataset.target);
+    if (input.type === 'password') {
+      input.type = 'text';
+      btn.textContent = 'Hide';
+    } else {
+      input.type = 'password';
+      btn.textContent = 'Show';
     }
-    return RedirectResponse(url="/signup/verify", status_code=303)
-
-
-@app.get("/signup/verify")
-async def signup_verify_get(request: Request):
-    pending = request.session.get("pending_signup")
-    if not pending:
-        return RedirectResponse(url="/signup", status_code=303)
-    return templates.TemplateResponse(
-        request, "signup_verify.html",
-        {**nav_context("signup", request), "email": pending["email"], "error": None},
-    )
-
-
-@app.post("/signup/verify")
-async def signup_verify_post(request: Request, code: str = Form(""), db: Session = Depends(get_db)):
-    pending = request.session.get("pending_signup")
-    if not pending:
-        return RedirectResponse(url="/signup", status_code=303)
-
-    code = code.strip()
-    otp_record = (
-        db.query(OtpCode)
-        .filter(OtpCode.email == pending["email"], OtpCode.verified == False)  # noqa: E712
-        .order_by(desc(OtpCode.created_at))
-        .first()
-    )
-
-    error = None
-    if not otp_record:
-        error = "Please request a new verification code."
-    elif otp_record.attempts >= OTP_MAX_ATTEMPTS:
-        error = "Too many attempts. Please sign up again to get a new code."
-    elif as_aware_utc(otp_record.expires_at) < datetime.now(timezone.utc):
-        error = "That code expired. Please sign up again to get a new code."
-    elif otp_record.code != code:
-        otp_record.attempts += 1
-        db.commit()
-        error = "That code doesn't match. Please check and try again."
-
-    if error:
-        return templates.TemplateResponse(
-            request, "signup_verify.html",
-            {**nav_context("signup", request), "email": pending["email"], "error": error},
-            status_code=422,
-        )
-
-    otp_record.verified = True
-
-    user = User(
-        name=pending["name"],
-        email=pending["email"],
-        password_hash=pending["password_hash"],
-        totp_secret=generate_totp_secret(),
-        totp_confirmed=True,
-        is_admin=False,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    request.session.pop("pending_signup", None)
-    request.session["user_id"] = user.id
-    request.session["is_admin"] = user.is_admin
-    return RedirectResponse(url="/", status_code=303)
-
-
-@app.post("/signup/resend-code")
-async def signup_resend_code(request: Request, db: Session = Depends(get_db)):
-    pending = request.session.get("pending_signup")
-    if not pending:
-        return RedirectResponse(url="/signup", status_code=303)
-
-    code = f"{random.randint(0, 999999):06d}"
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)
-    otp = OtpCode(email=pending["email"], code=code, expires_at=expires_at)
-    db.add(otp)
-    db.commit()
-    send_otp_email(pending["email"], code)
-
-    return RedirectResponse(url="/signup/verify", status_code=303)
+  });
+});
+</script>
+{% endblock %}
