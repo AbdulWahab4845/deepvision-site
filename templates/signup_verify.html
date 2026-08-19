@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Verify your email — DeepVision.ai{% endblock %}
+{% block content %}
+<section class="page-hero">
+  <div class="wrap">
+    <p class="eyebrow">Account</p>
+    <h1>Verify your email</h1>
+    <p class="page-hero-lede">We sent a 6-digit code to {{ email }}. Enter it below to finish creating your account.</p>
+  </div>
+</section>
+<section class="section">
+  <div class="wrap" style="max-width: 480px;">
+    <div class="contact-form-wrap">
+      {% if error %}<p class="field-error" style="margin-bottom: 16px;">{{ error }}</p>{% endif %}
+      <form class="contact-form" method="post" action="/signup/verify">
+        <div class="field">
+          <label for="code">6-digit code</label>
+          <input type="text" id="code" name="code" inputmode="numeric" maxlength="6"
+                 autocomplete="one-time-code" autofocus
+                 style="text-align: center; letter-spacing: 0.3em; font-size: 1.2rem;">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Verify &amp; create account</button>
+      </form>
+      <form method="post" action="/signup/resend-code" style="margin-top: 12px;">
+        <button type="submit" class="btn btn-ghost btn-block">Resend code</button>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}
