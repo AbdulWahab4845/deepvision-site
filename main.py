@@ -215,7 +215,7 @@ async def contact_post(
     )
 
 
-# ---- Signup (open to the public) ----
+# ---- Signup (open to the public, simple email verification — no authenticator app) ----
 
 @app.get("/signup")
 async def signup_get(request: Request):
@@ -244,6 +244,8 @@ async def signup_post(
         errors["email"] = "Please enter a valid email."
     elif get_user_by_email(db, values["email"]):
         errors["email"] = "An account with this email already exists."
+    elif values["email"] in ADMIN_EMAILS:
+        errors["email"] = "This email uses a separate admin login."
     if len(password) < 8:
         errors["password"] = "Password must be at least 8 characters."
     elif password != confirm_password:
@@ -256,77 +258,113 @@ async def signup_post(
             status_code=422,
         )
 
-    secret = generate_totp_secret()
+    code = f"{random.randint(0, 999999):06d}"
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)
+    otp = OtpCode(email=values["email"], code=code, expires_at=expires_at)
+    db.add(otp)
+    db.commit()
+
+    sent = send_otp_email(values["email"], code)
+    if not sent:
+        return templates.TemplateResponse(
+            request, "signup.html",
+            {
+                **nav_context("signup", request),
+                "errors": {"form": "Couldn't send the verification email. Please try again in a moment."},
+                "values": values,
+            },
+            status_code=502,
+        )
+
+    request.session["pending_signup"] = {
+        "name": values["name"],
+        "email": values["email"],
+        "password_hash": hash_password(password),
+    }
+    return RedirectResponse(url="/signup/verify", status_code=303)
+
+
+@app.get("/signup/verify")
+async def signup_verify_get(request: Request):
+    pending = request.session.get("pending_signup")
+    if not pending:
+        return RedirectResponse(url="/signup", status_code=303)
+    return templates.TemplateResponse(
+        request, "signup_verify.html",
+        {**nav_context("signup", request), "email": pending["email"], "error": None},
+    )
+
+
+@app.post("/signup/verify")
+async def signup_verify_post(request: Request, code: str = Form(""), db: Session = Depends(get_db)):
+    pending = request.session.get("pending_signup")
+    if not pending:
+        return RedirectResponse(url="/signup", status_code=303)
+
+    code = code.strip()
+    otp_record = (
+        db.query(OtpCode)
+        .filter(OtpCode.email == pending["email"], OtpCode.verified == False)  # noqa: E712
+        .order_by(desc(OtpCode.created_at))
+        .first()
+    )
+
+    error = None
+    if not otp_record:
+        error = "Please request a new verification code."
+    elif otp_record.attempts >= OTP_MAX_ATTEMPTS:
+        error = "Too many attempts. Please sign up again to get a new code."
+    elif as_aware_utc(otp_record.expires_at) < datetime.now(timezone.utc):
+        error = "That code expired. Please sign up again to get a new code."
+    elif otp_record.code != code:
+        otp_record.attempts += 1
+        db.commit()
+        error = "That code doesn't match. Please check and try again."
+
+    if error:
+        return templates.TemplateResponse(
+            request, "signup_verify.html",
+            {**nav_context("signup", request), "email": pending["email"], "error": error},
+            status_code=422,
+        )
+
+    otp_record.verified = True
+
     user = User(
-        name=values["name"],
-        email=values["email"],
-        password_hash=hash_password(password),
-        totp_secret=secret,
-        totp_confirmed=False,
+        name=pending["name"],
+        email=pending["email"],
+        password_hash=pending["password_hash"],
+        totp_secret=generate_totp_secret(),
+        totp_confirmed=True,
+        is_admin=False,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    request.session["pending_setup_user_id"] = user.id
-    return RedirectResponse(url="/totp-setup", status_code=303)
-
-
-@app.get("/totp-setup")
-async def totp_setup_get(request: Request, db: Session = Depends(get_db)):
-    user_id = request.session.get("pending_setup_user_id")
-    if not user_id:
-        return RedirectResponse(url="/signup", status_code=303)
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        return RedirectResponse(url="/signup", status_code=303)
-
-    uri = get_totp_uri(user.totp_secret, user.email)
-    return templates.TemplateResponse(
-        request, "totp_setup.html",
-        {**nav_context("", request), "qr_data_uri": qr_code_data_uri(uri), "secret": user.totp_secret, "error": None},
-    )
-
-
-@app.post("/totp-setup")
-async def totp_setup_post(request: Request, code: str = Form(""), db: Session = Depends(get_db)):
-    user_id = request.session.get("pending_setup_user_id")
-    if not user_id:
-        return RedirectResponse(url="/signup", status_code=303)
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        return RedirectResponse(url="/signup", status_code=303)
-
-    if not verify_totp_code(user.totp_secret, code):
-        uri = get_totp_uri(user.totp_secret, user.email)
-        return templates.TemplateResponse(
-            request, "totp_setup.html",
-            {
-                **nav_context("", request),
-                "qr_data_uri": qr_code_data_uri(uri),
-                "secret": user.totp_secret,
-                "error": "That code didn't match. Try the current code from your app.",
-            },
-            status_code=422,
-        )
-
-    user.totp_confirmed = True
-    if user.email in ADMIN_EMAILS:
-        user.is_admin = True
-    db.commit()
-
-    was_admin_setup = request.session.get("pending_setup_was_admin", False)
-    request.session.pop("pending_setup_user_id", None)
-    request.session.pop("pending_setup_was_admin", None)
+    request.session.pop("pending_signup", None)
     request.session["user_id"] = user.id
     request.session["is_admin"] = user.is_admin
-
-    if was_admin_setup and user.is_admin:
-        return RedirectResponse(url="/admin/inquiries", status_code=303)
     return RedirectResponse(url="/", status_code=303)
 
 
-# ---- Login (for normal users) ----
+@app.post("/signup/resend-code")
+async def signup_resend_code(request: Request, db: Session = Depends(get_db)):
+    pending = request.session.get("pending_signup")
+    if not pending:
+        return RedirectResponse(url="/signup", status_code=303)
+
+    code = f"{random.randint(0, 999999):06d}"
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)
+    otp = OtpCode(email=pending["email"], code=code, expires_at=expires_at)
+    db.add(otp)
+    db.commit()
+    send_otp_email(pending["email"], code)
+
+    return RedirectResponse(url="/signup/verify", status_code=303)
+
+
+# ---- Login (for normal users — password only, no TOTP) ----
 
 @app.get("/login")
 async def login_get(request: Request):
@@ -351,46 +389,72 @@ async def login_post(
             status_code=422,
         )
 
-    if not user.totp_confirmed:
-        request.session["pending_setup_user_id"] = user.id
-        return RedirectResponse(url="/totp-setup", status_code=303)
-
-    request.session["pending_login_user_id"] = user.id
-    return RedirectResponse(url="/login-totp", status_code=303)
-
-
-@app.get("/login-totp")
-async def login_totp_get(request: Request):
-    if not request.session.get("pending_login_user_id"):
-        return RedirectResponse(url="/login", status_code=303)
-    return templates.TemplateResponse(request, "login_totp.html", {**nav_context("login", request), "error": None})
-
-
-@app.post("/login-totp")
-async def login_totp_post(request: Request, code: str = Form(""), db: Session = Depends(get_db)):
-    user_id = request.session.get("pending_login_user_id")
-    if not user_id:
-        return RedirectResponse(url="/login", status_code=303)
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user or not verify_totp_code(user.totp_secret, code):
+    if user.email in ADMIN_EMAILS or user.is_admin:
         return templates.TemplateResponse(
-            request, "login_totp.html",
-            {**nav_context("login", request), "error": "That code didn't match. Try the current code from your app."},
-            status_code=422,
+            request, "login.html",
+            {
+                **nav_context("login", request),
+                "errors": {"form": "This account uses a separate admin login page."},
+                "values": values,
+            },
+            status_code=403,
         )
-
-    request.session.pop("pending_login_user_id", None)
-
-    if user.email in ADMIN_EMAILS and not user.is_admin:
-        user.is_admin = True
-        db.commit()
 
     request.session["user_id"] = user.id
     request.session["is_admin"] = user.is_admin
     return RedirectResponse(url="/", status_code=303)
 
 
-# ---- Admin login (separate entry point, hidden from normal users) ----
+# ---- Admin login (separate entry point, hidden from normal users, uses authenticator app) ----
+
+@app.get("/totp-setup")
+async def totp_setup_get(request: Request, db: Session = Depends(get_db)):
+    user_id = request.session.get("pending_setup_user_id")
+    if not user_id:
+        return RedirectResponse(url="/admin/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return RedirectResponse(url="/admin/login", status_code=303)
+
+    uri = get_totp_uri(user.totp_secret, user.email)
+    return templates.TemplateResponse(
+        request, "totp_setup.html",
+        {**nav_context("", request), "qr_data_uri": qr_code_data_uri(uri), "secret": user.totp_secret, "error": None},
+    )
+
+
+@app.post("/totp-setup")
+async def totp_setup_post(request: Request, code: str = Form(""), db: Session = Depends(get_db)):
+    user_id = request.session.get("pending_setup_user_id")
+    if not user_id:
+        return RedirectResponse(url="/admin/login", status_code=303)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return RedirectResponse(url="/admin/login", status_code=303)
+
+    if not verify_totp_code(user.totp_secret, code):
+        uri = get_totp_uri(user.totp_secret, user.email)
+        return templates.TemplateResponse(
+            request, "totp_setup.html",
+            {
+                **nav_context("", request),
+                "qr_data_uri": qr_code_data_uri(uri),
+                "secret": user.totp_secret,
+                "error": "That code didn't match. Try the current code from your app.",
+            },
+            status_code=422,
+        )
+
+    user.totp_confirmed = True
+    if user.email in ADMIN_EMAILS:
+        user.is_admin = True
+    db.commit()
+
+    request.session.pop("pending_setup_user_id", None)
+    request.session["user_id"] = user.id
+    request.session["is_admin"] = user.is_admin
+    return RedirectResponse(url="/admin/inquiries", status_code=303)
+
 
 @app.get("/admin/login")
 async def admin_login_get(request: Request):
@@ -427,7 +491,6 @@ async def admin_login_post(
 
     if not user.totp_confirmed:
         request.session["pending_setup_user_id"] = user.id
-        request.session["pending_setup_was_admin"] = True
         return RedirectResponse(url="/totp-setup", status_code=303)
 
     request.session["pending_admin_login_user_id"] = user.id
